@@ -1,0 +1,151 @@
+import glob #import module
+import numpy as np #import module
+import pandas as pd #import module
+import kagglehub #import module
+from pathlib import Path #import module
+import matplotlib.pyplot as plt #import module
+from scipy import stats #import module
+
+#import module
+from statsmodels.stats.multicomp import pairwise_tukeyhsd 
+
+#analysis 1 part a - age & win method
+#data file location 
+path = Path(kagglehub.dataset_download("calmdownkarm/ufcdataset/versions/5"))
+
+#finds the file 
+csvs = list(Path(path).rglob("*.csv"))
+
+#reads the file
+for i, f in enumerate(csvs): 
+    print(f"{i:2d} {f.relative_to(path)}")
+
+p = Path(path) #finding the file 
+df = pd.read_csv(p / "data.csv", low_memory=False) #reads data file
+
+#getting specific columns  
+use_cols = ["B_Name", "B_Age", "R_Name", "R_Name", "R_Age", "winby", "winner"] 
+df = df[use_cols].copy()
+
+#gets rid empty columns
+df = df.dropna(subset=["B_Age", "R_Age", "winby", "winner"])
+
+#set conditions 
+def simplify_winby(x: str) -> str:
+    x = str(x).upper()
+    if ("KO" in x) or ("TKO" in x):
+        return "KO/TKO"
+    if "SUB" in x:
+        return "Submission"
+    if "DEC" in x:
+        return "Decision"
+    return "Other"
+
+#keep only those conditions
+df["Win_Method"] = df["winby"].apply(simplify_winby)
+df = df[df["Win_Method"].isin(["KO/TKO", "Submission", "Decision"])]
+
+#color coding specific categories  
+winner_lower = df["winner"].astype(str).str.strip().str.lower()
+df["Winner_Age"] = np.where(winner_lower.eq("red"), df["R_Age"],
+                    np.where(winner_lower.eq("blue"), df["B_Age"], np.nan))
+
+#get rid of rows where there is not an age
+df = df.dropna(subset=["Winner_Age"])
+
+#setting age range for variables pulled from data set 
+df = df[(df["Winner_Age"] >= 18) & (df["Winner_Age"] <= 55)].copy()
+
+#shows how many fights remain
+print("Rows after cleaning:", len(df))
+
+#shows most fights won was by decision method
+#shows fewest fights won was by submission method 
+print("\nCounts by win method:\n", df["Win_Method"].value_counts(), "\n") 
+
+#shows fighters who won with knockout are older than ones who won with submission
+print("Summary of winner_age by win_method:\n",
+      df.groupby("Win_Method")["Winner_Age"].describe().round(2), "\n")
+
+#makes win method display order
+order = ["KO/TKO", "Submission", "Decision"]
+
+#sets size of graph 
+plt.figure(figsize=(7,5))
+
+#plots the data
+plt.boxplot([df.loc[df["Win_Method"]==m, "Winner_Age"] for m in order], 
+            tick_labels=order, 
+            showfliers=False
+)
+plt.title("Winner age by win method") #titles boxplot
+plt.xlabel("Win Method") #labels x-axis
+plt.ylabel("Winner Age") #labels y-axis
+
+#analysis 1 part b - age & win method
+#solves for mean of age per win method 
+means = df.groupby("Win_Method")["Winner_Age"].mean().reindex(order)
+
+#solves for standard error of mean 
+ses = df.groupby("Win_Method")["Winner_Age"].sem().reindex(order)
+
+#solves for confidence interval 
+cis95 = 1.96 * ses
+
+#puts data in order for x-axis 
+x = np.arange(len(order))
+
+#sets size of graph 
+plt.figure(figsize=(7,5))
+
+#plots data on bar graph 
+plt.bar(x, means.values, yerr=cis95.values, capsize=6)
+plt.xticks(x, order) #changes numbers to categories 
+
+#titles graph 
+plt.title("Avg. winner age by win method (95% CI)")
+
+plt.ylabel("Average Age") #labels y-axis
+plt.xlabel("Win Method") #labels x-axis
+
+#shows medians for KO/TKO is bit higher
+#averages for the ages are similar but different 
+#shows that age plays a part in fighters win method 
+plt.show()
+
+#gets winner of each win method
+ko_age = df.loc[df["Win_Method"]=="KO/TKO", "Winner_Age"]
+sub_age = df.loc[df["Win_Method"]=="Submission", "Winner_Age"]
+dec_age = df.loc[df["Win_Method"]=="Decision", "Winner_Age"]
+
+#runs ANOVA test
+#sets conditions - yes or no 
+#p-value = 0; is statisitically significant 
+#age varies by type of win
+#supported by ANOVA tests
+f_stat, p_val = stats.f_oneway(ko_age, sub_age, dec_age)
+print(f"ANOVA: F = {f_stat:.2f}, p = {p_val:.2f}")
+sig = p_val < .05
+print("Significant differences across methods?", "Yes" if sig else "No")
+
+#shows us what win method are different in age
+#shows all win methods are significant since p-value less than .05
+#shows difference in means
+#supported by Tukey test
+if sig:
+      tukey = pairwise_tukeyhsd(endog=df["Winner_Age"].values, 
+                                groups=df["Win_Method"].values, 
+                                alpha=.5)
+      print("\nTukey HSD results:\n")
+      print(tukey.summary())
+
+#cleans up the file of dataset and displays it 
+#old fighters (about 31 years old) are usually KO/TKO wins
+#young fighters (about 30 years old) are usually submission wins
+#middle age range are usually decision wins
+#implies fighters that are older, focus on KO/TKO (power-centered)
+#implies fighters that are younger, focus on submissions (technique-centered)
+out_path = Path("winmethod_age_clean.csv")
+cols_to_save = ["Winner_Age", "Win_Method", "winner", "B_Age", "R_Age"]
+df[cols_to_save].to_csv(out_path, index=False)
+print("Saved:", out_path.resolve())
