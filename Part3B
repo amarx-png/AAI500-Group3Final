@@ -1,0 +1,133 @@
+from pathlib import Path #import module
+import numpy as np #import module
+import pandas as pd #import module
+import matplotlib.pyplot as plt #import module
+from scipy import stats #import module
+
+#analysis 2 part a - height vs weight & win method
+#data file location 
+path = Path(kagglehub.dataset_download("calmdownkarm/ufcdataset/versions/5"))
+
+#finds the file 
+csvs = list(Path(path).rglob("*.csv"))
+
+#reads the file
+for i, f in enumerate(csvs):
+    print(f"{i:2d} {f.relative_to(path)}")
+
+p = Path(path) #finding the file 
+df = pd.read_csv(p / "data.csv", low_memory=False) #reads data file
+
+#set conditions 
+def simplify_winby(x):
+    s = str(x).upper().strip()
+    if ("KO" in s) or ("TKO" in s):
+        return "KO/TKO"
+    if ("SUB" in s):
+        return "Submission"
+    if "DEC" in x:
+        return "Decision"
+    return "Other"
+
+#getting specific columns
+use_cols2 = ["B_Height", "R_Height", "B_Weight", "R_Weight", "winby", "winner"]
+df2 = df[use_cols2].copy()
+
+#makes words to numbers
+for c in ["B_Height", "R_Height", "B_Weight", "R_Weight"]:
+    df2[c] = pd.to_numeric(df2[c], errors="coerce")
+
+#creates new column with only win methods
+df2["Win_Method"] = df2["winby"].apply(simplify_winby)
+df2 = df2[df2["Win_Method"].isin(["KO/TKO", "Submission", "Decision"])]
+
+#gets height and weight of winner
+winner_lower = df2["winner"].astype(str).str.strip().str.lower()
+
+#color coding specific categories for height
+df2["Winner_Height"] = np.where(
+    winner_lower.eq("red"), df2["R_Height"], 
+    np.where(winner_lower.eq("blue"), df2["B_Height"], np.nan)
+)
+
+#color coding specific categories for weight
+df2["Winner_Weight"] = np.where(
+    winner_lower.eq("red"), df2["R_Weight"], 
+    np.where(winner_lower.eq("blue"), df2["B_Weight"], np.nan)
+)
+
+#gets rid of missing data
+df2 = df2.dropna(subset=["Winner_Height", "Winner_Weight"])
+df2 = df2[(df2["Winner_Height"] > 0) & (df2["Winner_Weight"] > 0)].copy()
+
+#solves sample size, win method distribution, descriptive stats of height per method
+print("Rows after cleaning:", len(df2))
+print("\nCounts by win method:\n", df2["Win_Method"].value_counts(), "\n")
+print("Descriptive stats by Win Method (Weight):/n", 
+      df2.groupby("Win_Method")["Winner_Weight"].describe().round(2), "/n")
+
+#analysis 2 part b - height vs weight & win method
+#makes win method display order
+order = ["KO/TKO", "Submission", "Decision"]
+
+#runs ANOVA test for height & win method 
+#height is different between win methods, statistically significant 
+ko_h = df2.loc[df2["Win_Method"]=="KO/TKO", "Winner_Height"]
+sub_h = df2.loc[df2["Win_Method"]=="Submission", "Winner_Height"]
+dec_h = df2.loc[df2["Win_Method"]=="Decision", "Winner_Height"]
+f_height, p_height = stats.f_oneway(ko_h, sub_h, dec_h)
+print(f"ANOVA (height): F = {f_height:.2f}, p = {p_height:.2f}")
+
+#runs ANOVA test for weight & win method 
+#weight is different between win methods, statistically significant
+ko_w = df2.loc[df2["Win_Method"]=="KO/TKO", "Winner_Weight"]
+sub_w = df2.loc[df2["Win_Method"]=="Submission", "Winner_Weight"]
+dec_w = df2.loc[df2["Win_Method"]=="Decision", "Winner_Weight"]
+f_weight, p_weight = stats.f_oneway(ko_w, sub_w, dec_w)
+print(f"ANOVA (weight): F = {f_weight:.2f}, p = {p_weight:.2f}")
+
+#shows difference in F-stats
+#larger F is, the stronger relationship 
+#weight plays a bigger factor than height for win method 
+print("\nWhich factor shows stronger relationship w/ win method?")
+if f_weight > f_height:
+    print(f"Weight has stronger effect (F={f_weight:.2f} > {f_height:.2f})")
+elif f_height > f_weight:
+    print(f"Height has stronger effect (F={f_height:.2f} > {f_weight:.2f})")
+else:
+    print(f"Height & weight show similar effects (F both equal about {f_weight:.2f}).")
+
+plt.figure(figsize=(7,5)) #sets figure size
+
+#plots the data
+plt.boxplot([df2.loc[df2["Win_Method"]==m, "Winner_Height"] for m in order], 
+            tick_labels=order, showfliers=False)
+
+#titles boxplot
+plt.title("Winner - height by win method") 
+
+plt.xlabel("Win method") #labels x-axis
+plt.ylabel("Winner - height") #labels y-axis
+plt.show() #shows graph
+
+plt.figure(figsize=(7,5)) #sets figure size
+
+#plots the data
+plt.boxplot([df2.loc[df2["Win_Method"]==m, "Winner_Weight"] for m in order], 
+            tick_labels=order, showfliers=False)
+
+#titles graph 
+plt.title("Winner - weight by win method")
+
+plt.xlabel("Win method") #labels x-axis
+plt.ylabel("Winner - weight") #labels y-axis
+plt.show() #shows graph 
+
+#KO/TKO win method is of tallest height and heaviest of fighters averagly
+#submission win method is of shortest height and lightest of fighters averagly
+#decision win method is of average height and lighter of fighters averagly
+#height and weight both can play a part in the win method 
+#cleans up the file of dataset and displays it 
+out_path = Path("height_Weight_winmethod.csv")
+df2[["Winner_Height", "Winner_Weight", "Win_Method"]].to_csv(out_path, index=False)
+print("\nSaved:", out_path.resolve())
